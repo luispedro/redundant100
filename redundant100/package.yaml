@@ -1,0 +1,35 @@
+name:           redundant100
+version:        0.0.0
+synopsis:       Redundant gene clustering
+category:       Bioinformatics
+license:        GPL-3
+maintainer:     Luis Pedro Coelho <coelho@embl.de>
+ghc-options:    -Wall
+
+dependencies:
+  - base >= 4.7 && < 5
+  - async
+  - bytestring
+  - conduit
+  - conduit-algorithms
+  - conduit-extra
+  - conduit-combinators
+  - deepseq
+  - exceptions
+  - filepath
+  - filemanip
+  - resourcet
+  - temporary
+  - vector
+  - vector-algorithms
+
+
+ghc-options: -Wall
+
+source-dirs:
+  - ./
+
+executables:
+  SortSizes:
+    main: SortSizes.hs
+

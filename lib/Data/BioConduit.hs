@@ -26,6 +26,7 @@ data Fasta = Fasta
 instance NFData Fasta where
     rnf !_ = ()
 
+faseqLength :: Fasta -> Int
 faseqLength = B.length . seqdata
 
 greaterThanSign :: Word8
@@ -42,6 +43,7 @@ faConduit' = C.await >>= \case
                   | B.head header == greaterThanSign -> getdata 1 (B.drop 1 header) []
                   | otherwise -> liftIO $ throwIO (AssertionFailed "Unexpected data")
   where
+    getdata :: MonadIO m' => Int -> B.ByteString -> [B.ByteString] -> C.Conduit B.ByteString m' Fasta
     getdata !n header toks = C.await >>= \case
                                 Nothing -> C.yield $ Fasta header (B.concat $ reverse toks)
                                 Just next
