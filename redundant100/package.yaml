@@ -40,6 +40,9 @@ executables:
   SortSizes:
     main: SortSizes.hs
 
+  SplitBlocks:
+    main: SplitBlocks.hs
+
   FindExactOverlaps:
     main: FindExactOverlaps.hs
 
