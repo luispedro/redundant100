@@ -8,45 +8,30 @@ import qualified Data.Conduit.Combinators as C
 import qualified Data.Conduit.Combinators as CC
 import qualified Data.Conduit.List as CL
 import qualified Data.Conduit.Binary as C
-import qualified Data.Conduit.Zlib as CZ
 import qualified Data.Conduit as C
-import           Data.Conduit ((.|), ($$+), ($$++))
-import qualified Data.Set as S
-import qualified Control.Concurrent.Async as A
+import           Data.Conduit ((.|))
 import System.Environment
 import Control.Monad
-import System.Directory
 import System.IO
 import System.Console.GetOpt
 import Data.Maybe
-import Data.Ord
 import Data.List
-import Control.Exception
-import Control.Monad.Primitive
 import Control.Monad.IO.Class
 import qualified Data.Vector as V
-import qualified Data.Vector.Algorithms.AmericanFlag as VA
-import qualified Data.Vector.Mutable as VM
-import Data.Vector.Algorithms.Search
-import qualified Data.Vector.Unboxed.Mutable as VUM
-import qualified Data.Vector.Generic.Mutable as VGM
-import Control.Monad.Trans.Resource
-import Control.Monad.Trans.Class
+import Control.Monad.Base
 import Data.Word
 import Data.Hash
-import Data.Hash.Rolling
+import Safe (headDef)
 import qualified Data.IntMap.Strict as IM
 
 import Data.BioConduit
-import Utils.Conduit
+import Data.Conduit.Algorithms.Async
 
 type FastaMap = IM.IntMap [Fasta]
 
 faContained :: Fasta -> Fasta -> Bool
 faContained (Fasta _ da) (Fasta _ db) = B.isInfixOf da db
 
-headDef v [] = v
-headDef _ (x:_) = x
 
 printEvery10k :: (MonadIO m) => C.Conduit a m a
 printEvery10k = printEvery10k' (1 :: Int) (10000 :: Int)
@@ -115,13 +100,13 @@ vMapMaybe f v = V.unfoldr loop 0
                                 Nothing -> loop (i + 1)
            | otherwise = Nothing
 
---findRepeatsIn :: (MonadIO m, MonadBase IO m) => Int -> SizedHash -> C.Conduit Fasta m B.ByteString
+findRepeatsIn :: (MonadIO m, MonadBase IO m) => Int -> SizedHash -> C.Conduit Fasta m B.ByteString
 findRepeatsIn n (SizedHash hashSize imap) = CC.conduitVector 4096 .| asyncMapC n findRepeatsIn' .| CC.concat
     where
         findRepeatsIn' :: V.Vector Fasta -> V.Vector B.ByteString
         findRepeatsIn' = vMapMaybe findRepeatsIn'1
         findRepeatsIn'1 :: Fasta -> Maybe B.ByteString
-        findRepeatsIn'1 faseq@(Fasta sid sseq)
+        findRepeatsIn'1 faseq@(Fasta sid _)
                 | null covered = Nothing
                 | otherwise = Just $ B.intercalate "\t" (sid:map seqheader covered)
             where
@@ -159,7 +144,7 @@ data CmdArgs = CmdArgs
                     , extraFilesFilesFrom :: FilePath
                     } deriving (Eq, Show)
 
-parseArgs [oarg, iarg] = CmdArgs iarg oarg ModeSingle False 8 []
+parseArgs [iarg, oarg] = CmdArgs iarg oarg ModeSingle False 8 []
 parseArgs argv = foldl' p (CmdArgs "" "" ModeSingle False 8 []) flags
     where
         (flags, [], _extraOpts) = getOpt Permute options argv

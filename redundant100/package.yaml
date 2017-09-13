@@ -14,12 +14,19 @@ dependencies:
   - conduit-algorithms
   - conduit-extra
   - conduit-combinators
+  - containers
+  - data-hash
   - deepseq
+  - directory
   - exceptions
   - filepath
   - filemanip
+  - primitive
   - resourcet
   - temporary
+  - transformers
+  - transformers-base
+  - safe
   - vector
   - vector-algorithms
 
@@ -32,4 +39,7 @@ source-dirs:
 executables:
   SortSizes:
     main: SortSizes.hs
+
+  FindExactOverlaps:
+    main: FindExactOverlaps.hs
 
