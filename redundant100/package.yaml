@@ -27,6 +27,7 @@ dependencies:
   - transformers
   - transformers-base
   - safe
+  - safeio
   - vector
   - vector-algorithms
 
@@ -46,3 +47,5 @@ executables:
   FindExactOverlaps:
     main: FindExactOverlaps.hs
 
+  RemoveRepeats:
+    main: RemoveRepeats.hs
