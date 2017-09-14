@@ -39,7 +39,7 @@ faConduit' :: (MonadIO m) => C.Conduit B.ByteString m Fasta
 faConduit' = C.await >>= \case
                 Nothing -> return ()
                 Just header
-                  | B.null header -> liftIO $ throwIO (AssertionFailed "Unexpected empty string at line 0")
+                  | B.null header -> liftIO $ throwIO (AssertionFailed "Unexpected empty string at line 1")
                   | B.head header == greaterThanSign -> getdata 1 (B.drop 1 header) []
                   | otherwise -> liftIO $ throwIO (AssertionFailed "Unexpected data")
   where
@@ -47,7 +47,7 @@ faConduit' = C.await >>= \case
     getdata !n header toks = C.await >>= \case
                                 Nothing -> C.yield $ Fasta header (B.concat $ reverse toks)
                                 Just next
-                                    | B.null next -> liftIO $ throwIO (AssertionFailed $ "Unexpected empty string at line " ++ show n)
+                                    | B.null next -> liftIO $ throwIO (AssertionFailed $ "Unexpected empty string at line " ++ show (n+1))
                                     | B.head next == greaterThanSign -> do
                                             C.yield $ Fasta header (B.concat $ reverse toks)
                                             getdata (n+1) (B.drop 1 next) []
