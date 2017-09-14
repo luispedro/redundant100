@@ -7,6 +7,7 @@ import qualified Data.Conduit.List as CL
 import qualified Data.Conduit.Binary as CB
 import qualified Data.Conduit as C
 import           Data.Conduit ((.|))
+import           Safe (atDef)
 import Control.Monad
 import System.Environment
 import System.Console.GetOpt
@@ -49,12 +50,15 @@ data CmdFlags = OutputFile FilePath
 
 
 parseArgs :: [String] -> CmdArgs
-parseArgs argv = foldl' p (CmdArgs "" "" "" 1) flags
+parseArgs argv = foldl' p (CmdArgs ifile ofile dupfile 1) flags
     where
-        (flags, [], []) = getOpt Permute options argv
+        (flags, args, _extraOpts) = getOpt Permute options argv
+        ifile = atDef "" args 0
+        ofile = atDef "" args 1
+        dupfile = atDef "" args 2
         options =
             [ Option ['o'] ["output"] (ReqArg OutputFile "FILE") "Output file"
-            , Option ['d'] ["duplicates"] (ReqArg DuplicatesFile "FILE") "Output file"
+            , Option ['d'] ["duplicates"] (ReqArg DuplicatesFile "FILE") "Duplicate file"
             , Option ['i'] ["input"] (ReqArg InputFile "FILE") "Input file to check"
             ]
         p c (OutputFile f) = c { ofileArg = f }

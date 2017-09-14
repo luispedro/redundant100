@@ -7,6 +7,7 @@ import qualified Data.Conduit.List as CL
 import qualified Data.Conduit.Binary as CB
 import qualified Data.Conduit as C
 import           Data.Conduit ((.|))
+import           Safe (atDef)
 import Control.Monad
 import System.Environment
 import System.Console.GetOpt
@@ -46,9 +47,11 @@ data CmdFlags = OutputFile FilePath
                 deriving (Eq, Show)
 
 parseArgs :: [String] -> CmdArgs
-parseArgs argv = foldl' p (CmdArgs "" "") flags
+parseArgs argv = foldl' p (CmdArgs ifile ofile) flags
     where
-        (flags, [], []) = getOpt Permute options argv
+        (flags, args, _extraArgs) = getOpt Permute options argv
+        ifile = atDef "" args 0
+        ofile = atDef "" args 1
         options =
             [ Option ['o'] ["output"] (ReqArg OutputFile "FILE") "Output file"
             , Option ['i'] ["input"] (ReqArg InputFile "FILE") "Input file to check"

@@ -5,6 +5,7 @@ import           System.Console.GetOpt
 import           System.Environment (getArgs)
 import           Data.Ord (comparing)
 import           Data.List (foldl')
+import           Safe (atDef)
 
 import Data.BioConduit
 import Algorithms.OutSort
@@ -44,10 +45,12 @@ options =
 
 
 parseArgs :: [String] -> CmdArgs
-parseArgs [iarg, oarg] = CmdArgs iarg oarg
-parseArgs argv = foldl' p (CmdArgs "" "") flags
+parseArgs argv = foldl' p (CmdArgs ifile ofile) flags
     where
-        (flags, [], _extraOpts) = getOpt Permute options argv
+        (flags, args, _extraOpts) = getOpt Permute options argv
+        ifile = atDef "" args 0
+        ofile = atDef "" args 1
+
         p c (OutputFile o) = c { argOfile = o }
         p c (InputFile i) = c { argIfile = i }
         p c Verbose = c
