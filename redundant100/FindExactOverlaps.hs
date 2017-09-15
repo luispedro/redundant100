@@ -8,11 +8,13 @@ import qualified Data.Conduit.Combinators as C
 import qualified Data.Conduit.Combinators as CC
 import qualified Data.Conduit.List as CL
 import qualified Data.Conduit.Binary as C
+import qualified Data.Conduit.Binary as CB
 import qualified Data.Conduit as C
 import           Data.Conduit ((.|))
+import           Safe (headDef, atDef)
+import           System.IO.SafeWrite (withOutputFile)
 import System.Environment
 import Control.Monad
-import System.IO
 import System.Console.GetOpt
 import Data.Maybe
 import Data.List
@@ -21,16 +23,17 @@ import qualified Data.Vector as V
 import Control.Monad.Base
 import Data.Word
 import Data.Hash
-import Safe (headDef)
 import qualified Data.IntMap.Strict as IM
 
 import Data.BioConduit
+import Data.Conduit.Algorithms.Utils
 import Data.Conduit.Algorithms.Async
 
 type FastaMap = IM.IntMap [Fasta]
+data SizedHash = SizedHash !Int !FastaMap
 
-faContained :: Fasta -> Fasta -> Bool
-faContained (Fasta _ da) (Fasta _ db) = B.isInfixOf da db
+faContainedIn :: Fasta -> Fasta -> Bool
+faContainedIn (Fasta _ da) (Fasta _ db) = B.isInfixOf da db
 
 
 printEvery10k :: (MonadIO m) => C.Conduit a m a
@@ -56,7 +59,6 @@ allHashes hashSize (Fasta _ faseq) = toInt <$> hashrest (B.unpack cont) initH
     toInt :: Hash -> Int
     toInt = fromIntegral . toInteger . asWord64
 
-data SizedHash = SizedHash !Int !FastaMap
 
 
 buildHash :: (Monad m) => C.Sink Fasta m SizedHash
@@ -73,46 +75,34 @@ buildHash = CL.fold addHash (SizedHash 0 IM.empty)
 findRepeats = findRepeats' Nothing (IM.empty :: FastaMap)
   where
     findRepeats' :: (MonadIO m) => Maybe Int -> FastaMap -> C.Conduit Fasta m B.ByteString
-    findRepeats' hs imap = C.await >>= \case
-        Nothing -> return ()
-        Just faseq@(Fasta sid sseq) -> do
-            let hashSize = fromMaybe (B.length sseq) hs
-                hashes :: [Int]
-                hashes = allHashes hashSize faseq
-                candidates :: [[Fasta]]
-                available :: [Maybe Int]
-                (candidates, available) = unzip $ flip map hashes $ \h -> case IM.lookup h imap of
-                    Nothing -> ([] :: [Fasta], Just h)
-                    Just prevs -> (prevs, Nothing)
+    findRepeats' hs imap = awaitJust $ \faseq@(Fasta sid sseq) -> do
+        let hashSize = fromMaybe (B.length sseq) hs
+            hashes :: [Int]
+            hashes = allHashes hashSize faseq
+            candidates :: [[Fasta]]
+            available :: [Maybe Int]
+            (candidates, available) = unzip $ flip map hashes $ \h -> case IM.lookup h imap of
+                Nothing -> ([] :: [Fasta], Just h)
+                Just prevs -> (prevs, Nothing)
 
-                covered = filter (`faContained` faseq) (concat candidates)
-                curk = headDef (head hashes) $ catMaybes available
-            when (not $ null covered) $
-                C.yield $ B.intercalate "\t" (sid:map seqheader covered)
-            findRepeats' (Just hashSize) (IM.alter (Just . (faseq:) . (fromMaybe [])) curk imap)
-
-vMapMaybe :: (a -> Maybe b) -> V.Vector a -> V.Vector b
-vMapMaybe f v = V.unfoldr loop 0
-    where
-        loop i
-           | i < V.length v = case f (v V.! i) of
-                                Just val -> Just (val, i + 1)
-                                Nothing -> loop (i + 1)
-           | otherwise = Nothing
+            covered = filter (`faContainedIn` faseq) (concat candidates)
+            -- Try to find an empty slot for the sequence. If it fails, just use first one
+            curk = headDef (head hashes) $ catMaybes available
+        forM_ covered $ \c ->
+            C.yield (B.concat [seqheader c, "\tC\t", sid])
+        findRepeats' (Just hashSize) (IM.alter (Just . (faseq:) . (fromMaybe [])) curk imap)
 
 findRepeatsIn :: (MonadIO m, MonadBase IO m) => Int -> SizedHash -> C.Conduit Fasta m B.ByteString
 findRepeatsIn n (SizedHash hashSize imap) = CC.conduitVector 4096 .| asyncMapC n findRepeatsIn' .| CC.concat
     where
         findRepeatsIn' :: V.Vector Fasta -> V.Vector B.ByteString
-        findRepeatsIn' = vMapMaybe findRepeatsIn'1
-        findRepeatsIn'1 :: Fasta -> Maybe B.ByteString
-        findRepeatsIn'1 faseq@(Fasta sid _)
-                | null covered = Nothing
-                | otherwise = Just $ B.intercalate "\t" (sid:map seqheader covered)
+        findRepeatsIn' = V.concatMap findRepeatsIn'1
+        findRepeatsIn'1 :: Fasta -> V.Vector B.ByteString
+        findRepeatsIn'1 faseq@(Fasta sid _) = V.fromList [B.concat [seqheader c, "\t", sid] | c <- covered]
             where
                 hashes = allHashes hashSize faseq
                 candidates = concat $ flip map hashes $ \h -> IM.findWithDefault [] h imap
-                covered = filter (`faContained` faseq) candidates
+                covered = filter (`faContainedIn` faseq) candidates
 
 data CmdFlags = OutputFile FilePath
                 | InputFile FilePath
@@ -144,10 +134,11 @@ data CmdArgs = CmdArgs
                     , extraFilesFilesFrom :: FilePath
                     } deriving (Eq, Show)
 
-parseArgs [iarg, oarg] = CmdArgs iarg oarg ModeSingle False 8 []
-parseArgs argv = foldl' p (CmdArgs "" "" ModeSingle False 8 []) flags
+parseArgs argv = foldl' p (CmdArgs iarg oarg ModeSingle False 8 []) flags
     where
-        (flags, [], _extraOpts) = getOpt Permute options argv
+        (flags, args, _extraOpts) = getOpt Permute options argv
+        iarg = atDef "" args 0
+        oarg = atDef "" args 1
         p c Verbose = c { verbose = True }
         p c (OutputFile o) = c { ofile = o }
         p c (InputFile i) = c { ifile = i }
@@ -165,7 +156,7 @@ main = do
                 .| faConduit
                 .| findRepeats
                 .| C.unlinesAscii
-                .| C.sinkFile (ofile opts)
+                .| CB.sinkFileCautious (ofile opts)
         ModeAcross -> do
             h <- C.runConduitRes $
                 C.sourceFile (ifile opts)
@@ -178,7 +169,7 @@ main = do
                     .| C.lines
                     .| CL.map B8.unpack
                     .| CL.consume
-            withFile (ofile opts) WriteMode $ \hout ->
+            withOutputFile (ofile opts) $ \hout ->
                 forM_ extraFiles $ \fafile -> do
                     putStrLn ("Handling file "++fafile)
                     C.runConduitRes $
