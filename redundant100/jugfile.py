@@ -77,11 +77,23 @@ def remove_duplicates(p, dups, oname):
             ])
     finally:
         os.unlink(n.name)
+    return oname
 
 def block(xs, n):
     while xs:
         yield xs[:n]
         xs = xs[n:]
+
+@TaskGenerator
+def concatenate_files(partials, oname):
+    with open(oname, 'wb') as output:
+        for p in partials:
+            with open(p, 'rb') as pinput:
+                while True:
+                    chunk = pinput.read(8192)
+                    if not chunk:
+                        break
+                    output.write(chunk)
 
 input_sorted = sort_size(INPUT)
 ofile_exact = 'partials/exact100.filtered.fna'
@@ -93,6 +105,7 @@ barrier()
 partials = glob('partials/splits/*.fna')
 partials.sort(key=extract_block_size)
 
+final = []
 for i,p0 in enumerate(partials):
     oname = f'partials/copies/{i}_self.txt'
     r = jug_execute(['./bin/FindExactOverlaps', p0, '-o', oname])
@@ -102,4 +115,7 @@ for i,p0 in enumerate(partials):
         oname=f'partials/copies/{i}_{j}.txt'
         find_overlaps(p0, chunk, oname)
         copies.append(oname)
-    remove_duplicates(p0, copies, p0.replace('/splits/', '/filtered/'))
+    final.append(
+            remove_duplicates(p0, copies, p0.replace('/splits/', '/filtered/')))
+
+concatenate_files(final, OUTPUT)
