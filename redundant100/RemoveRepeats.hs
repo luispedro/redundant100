@@ -23,8 +23,8 @@ filterCopies f = atomicConduitUseFile f (\th -> (CL.groupOn1 seqdata .| yield1 t
     where
         yield1 th = C.awaitForever $ \(n, rest) -> do
             C.yield n
-            unless (null rest) $
-                liftIO $ B8.hPutStrLn th (B8.intercalate "\t" (seqheader <$> (n:rest)))
+            forM_ rest $ \r ->
+                liftIO $ B8.hPutStrLn th (B8.concat [seqheader r, "\t=\t", seqheader n])
 
 removeRepeats :: FilePath -> FilePath -> FilePath -> IO ()
 removeRepeats ifile ofile copies = C.runConduitRes $
