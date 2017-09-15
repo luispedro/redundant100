@@ -3,9 +3,6 @@
 {-# LANGUAGE LambdaCase, OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables, FlexibleContexts #-}
 import qualified Data.ByteString as B
-import qualified Data.ByteString.Char8 as B8
-import qualified Data.Conduit.Combinators as C
-import qualified Data.Conduit.Combinators as CC
 import qualified Data.Conduit.List as CL
 import qualified Data.Conduit.Binary as C
 import qualified Data.Conduit as C
@@ -23,8 +20,6 @@ readCopies cfname =
     C.runConduitRes $
         C.sourceFile cfname
         .| C.lines
-        .| CL.map (tail . B8.split '\t')
-        .| CC.concat
         .| CL.fold (flip S.insert) S.empty
 
 
@@ -50,6 +45,7 @@ data CmdArgs = CmdArgs
                     , verbose :: Bool
                     } deriving (Eq, Show)
 
+parseArgs :: [String] -> CmdArgs
 parseArgs argv = foldl' p (CmdArgs iarg oarg delarg False) flags
     where
         (flags, args, _extraOpts) = getOpt Permute options argv
@@ -69,6 +65,6 @@ main = do
     C.runConduitRes $
         C.sourceFile fna
             .| faConduit
-            .| C.filter (flip S.notMember toRemove . seqheader)
+            .| CL.filter (flip S.notMember toRemove . seqheader)
             .| faWriteC
             .| C.sinkFileCautious ofna

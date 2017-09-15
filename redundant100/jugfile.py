@@ -65,7 +65,7 @@ def remove_duplicates(p, dups, oname):
     try:
         for e in dups:
             for d in open(e):
-                d = d.strip()
+                d = d.split()[0]
                 n.write(f'{d}\n')
         n.flush()
         n.close()
