@@ -22,8 +22,10 @@ dependencies:
   - filepath
   - filemanip
   - primitive
+  - MissingH
   - resourcet
   - temporary
+  - text
   - transformers
   - transformers-base
   - safe
@@ -49,3 +51,6 @@ executables:
 
   RemoveRepeats:
     main: RemoveRepeats.hs
+
+  Remove:
+    main: Remove.hs

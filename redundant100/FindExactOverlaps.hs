@@ -98,7 +98,7 @@ findRepeatsIn n (SizedHash hashSize imap) = CC.conduitVector 4096 .| asyncMapC n
         findRepeatsIn' :: V.Vector Fasta -> V.Vector B.ByteString
         findRepeatsIn' = V.concatMap findRepeatsIn'1
         findRepeatsIn'1 :: Fasta -> V.Vector B.ByteString
-        findRepeatsIn'1 faseq@(Fasta sid _) = V.fromList [B.concat [seqheader c, "\t", sid] | c <- covered]
+        findRepeatsIn'1 faseq@(Fasta sid _) = V.fromList [B.concat [seqheader c, "\tC\t", sid] | c <- covered]
             where
                 hashes = allHashes hashSize faseq
                 candidates = concat $ flip map hashes $ \h -> IM.findWithDefault [] h imap

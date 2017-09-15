@@ -10,11 +10,17 @@ import ncpus
 def make():
     jug_execute.f(['make'])
 
+
 @Task
 def makeoutdirs():
     makedirs('partials/', exist_ok=True)
     makedirs('partials/copies', exist_ok=True)
     makedirs('partials/splits', exist_ok=True)
+    makedirs('partials/filtered', exist_ok=True)
+
+@TaskGenerator
+def value_after(val, after):
+    return val
 
 @TaskGenerator
 def sort_size(ifile):
@@ -30,17 +36,6 @@ def extract_block_size(fname):
     return int(m.group(1), 10)
 
 exec(open('./config.py').read())
-
-input_sorted = sort_size(INPUT)
-ofile_exact = 'partials/exact100.filtered.fna'
-exact_copy_files = 'partials/copies/exact_0.txt'
-r = jug_execute(['./bin/RemoveRepeats', input_sorted, '-o', ofile_exact, '-d', exact_copy_files])
-jug_execute(['./bin/SplitBlocks', ofile_exact, '-d', 'partials/splits/block'], run_after=r)
-
-barrier()
-partials = glob('partials/splits/*.fna')
-partials.sort(key=extract_block_size)
-
 @TaskGenerator
 def find_overlaps(p, extra, oname):
     import tempfile
@@ -48,7 +43,6 @@ def find_overlaps(p, extra, oname):
     n = tempfile.NamedTemporaryFile(mode='wt', delete=False)
     try:
         for e in extra:
-            print(e)
             n.write(f'{e}\n')
         n.flush()
         n.close()
@@ -63,14 +57,49 @@ def find_overlaps(p, extra, oname):
     finally:
         os.unlink(n.name)
 
+@TaskGenerator
+def remove_duplicates(p, dups, oname):
+    import tempfile
+    import os
+    n = tempfile.NamedTemporaryFile(mode='wt', delete=False)
+    try:
+        for e in dups:
+            for d in open(e):
+                d = d.strip()
+                n.write(f'{d}\n')
+        n.flush()
+        n.close()
+        subprocess.check_call([
+            './bin/Remove',
+            '-i', p,
+            '-o', oname,
+            '-d', n.name,
+            ])
+    finally:
+        os.unlink(n.name)
 
 def block(xs, n):
     while xs:
         yield xs[:n]
         xs = xs[n:]
 
+input_sorted = sort_size(INPUT)
+ofile_exact = 'partials/exact100.filtered.fna'
+exact_copy_files = 'partials/copies/exact_0.txt'
+r = jug_execute(['./bin/RemoveRepeats', input_sorted, '-o', ofile_exact, '-d', exact_copy_files])
+jug_execute(['./bin/SplitBlocks', ofile_exact, '-d', 'partials/splits/block'], run_after=r)
+
+barrier()
+partials = glob('partials/splits/*.fna')
+partials.sort(key=extract_block_size)
+
 for i,p0 in enumerate(partials):
-    jug_execute(['./bin/FindExactOverlaps', p0, '-o', f'partials/copies/{i}_self.txt'])
+    oname = f'partials/copies/{i}_self.txt'
+    r = jug_execute(['./bin/FindExactOverlaps', p0, '-o', oname])
+    copies = [value_after(oname, after=r)]
     others = partials[i+1:]
     for j,chunk in enumerate(block(others, 8)):
-        find_overlaps(p0, chunk, oname=f'partials/copies/{i}_{j}.txt')
+        oname=f'partials/copies/{i}_{j}.txt'
+        find_overlaps(p0, chunk, oname)
+        copies.append(oname)
+    remove_duplicates(p0, copies, p0.replace('/splits/', '/filtered/'))
