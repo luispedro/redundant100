@@ -18,11 +18,14 @@ instance Eq FASize where
 instance Ord FASize where
     compare = comparing $ \(FASize a) -> (faseqLength a, seqdata a, seqheader a)
 
+maxBPSBlock :: Int
+maxBPSBlock = 24 * 1000 * 1000 * 1000
+
 outsortFasta :: FilePath -> FilePath -> IO ()
 outsortFasta ifile ofile = outsort
     (faConduit .| CL.map FASize)
     (CL.map unwrapFASize .| faWriteC)
-    (isolateBySize (faseqLength . unwrapFASize) 2000000)
+    (isolateBySize (faseqLength . unwrapFASize) maxBPSBlock)
     (CB.sourceFile ifile)
     (CB.sinkFileCautious ofile)
 
