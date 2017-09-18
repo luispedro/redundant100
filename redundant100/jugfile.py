@@ -35,7 +35,17 @@ def extract_block_size(fname):
     m  = re.match('^partials/splits/block\.(\d+)\.fna$', fname)
     return int(m.group(1), 10)
 
-exec(open('./config.py').read())
+try:
+    exec(open('./config.py').read())
+except:
+    from sys import stderr,exit
+    stderr.write('''
+Please write a configuration file 'config.py' where the following two variables are set:
+
+INPUT
+OUTPUT
+''')
+    exit(1)
 @TaskGenerator
 def find_overlaps(p, extra, oname):
     import tempfile
