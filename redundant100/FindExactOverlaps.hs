@@ -4,6 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables, FlexibleContexts #-}
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as B8
+import qualified Data.ByteString.Search as BSearch
 import qualified Data.Conduit.Combinators as C
 import qualified Data.Conduit.Combinators as CC
 import qualified Data.Conduit.List as CL
@@ -11,19 +12,24 @@ import qualified Data.Conduit.Binary as C
 import qualified Data.Conduit.Binary as CB
 import qualified Data.Conduit as C
 import           Data.Conduit ((.|))
+import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as VU
+import qualified Data.IntMap.Strict as IM
 import           Safe (headDef, atDef)
 import           System.IO.SafeWrite (withOutputFile)
+import           Data.Strict.Tuple (Pair(..))
+import           Control.Concurrent (setNumCapabilities)
 import System.Environment
+import           Control.Monad.Extra (whenJust)
+import           Control.Applicative ((<|>))
 import Control.Monad
 import System.Console.GetOpt
 import Data.Maybe
 import Data.List
 import Control.Monad.IO.Class
-import qualified Data.Vector as V
 import Control.Monad.Base
 import Data.Word
 import Data.Hash
-import qualified Data.IntMap.Strict as IM
 
 import Data.BioConduit
 import Data.Conduit.Algorithms.Utils
@@ -33,7 +39,7 @@ type FastaMap = IM.IntMap [Fasta]
 data SizedHash = SizedHash !Int !FastaMap
 
 faContainedIn :: Fasta -> Fasta -> Bool
-faContainedIn (Fasta _ da) (Fasta _ db) = B.isInfixOf da db
+faContainedIn (Fasta _ da) (Fasta _ db) = not . null $ BSearch.indices da db
 
 
 printEvery10k :: (MonadIO m) => C.Conduit a m a
@@ -61,36 +67,46 @@ allHashes hashSize (Fasta _ faseq) = toInt <$> hashrest (B.unpack cont) initH
 
 
 
-buildHash :: (Monad m) => C.Sink Fasta m SizedHash
-buildHash = CL.fold addHash (SizedHash 0 IM.empty)
+annotate :: Int -> Fasta -> (Fasta, (VU.Vector Int))
+annotate hashSize fa = (fa, VU.fromList (allHashes hashSize fa))
+
+buildHash :: (MonadIO m, MonadBase IO m) => Int -> C.Sink Fasta m SizedHash
+buildHash nthreads = C.peek >>= \case
+        Nothing -> error "Empty stream"
+        Just first -> do
+            let hashSize = faseqLength first
+            SizedHash hashSize <$>
+                    (C.conduitVector 4096
+                    .| asyncMapC nthreads (V.map (annotate hashSize))
+                    .| CL.fold insertmany IM.empty)
     where
-        addHash (SizedHash h imap) faseq@(Fasta _ sseq) = SizedHash hashSize (IM.alter (Just . (faseq:) . (fromMaybe [])) curk imap)
+        insertmany imap = V.foldl addHash imap
+        addHash imap (faseq, hashes) = IM.alter (Just . (faseq:) . (fromMaybe [])) curk imap
             where
-                hashSize
-                    | h == 0 = B.length sseq
-                    | otherwise = h
-                hashes = allHashes hashSize faseq
-                curk = headDef (head hashes) (filter (flip IM.notMember imap) hashes)
+                hashes' = VU.toList hashes
+                curk = headDef (head hashes') (filter (flip IM.notMember imap) hashes')
 
-findRepeats = findRepeats' Nothing (IM.empty :: FastaMap)
+findRepeats nthreads = do
+    first <- C.peek
+    whenJust first $ \faseq ->
+        CC.conduitVector 4096
+            .| asyncMapC nthreads (V.map (annotate (faseqLength faseq)))
+            .| CC.concat
+            .| findRepeats' (IM.empty :: FastaMap)
   where
-    findRepeats' :: (MonadIO m) => Maybe Int -> FastaMap -> C.Conduit Fasta m B.ByteString
-    findRepeats' hs imap = awaitJust $ \faseq@(Fasta sid sseq) -> do
-        let hashSize = fromMaybe (B.length sseq) hs
-            hashes :: [Int]
-            hashes = allHashes hashSize faseq
-            candidates :: [[Fasta]]
-            available :: [Maybe Int]
-            (candidates, available) = unzip $ flip map hashes $ \h -> case IM.lookup h imap of
-                Nothing -> ([] :: [Fasta], Just h)
-                Just prevs -> (prevs, Nothing)
+    findRepeats' :: Monad m => FastaMap -> C.Conduit (Fasta,(VU.Vector Int)) m B.ByteString
+    findRepeats' imap = awaitJust $ \(faseq@(Fasta sid _), hashes) -> do
+        let lookup1 :: Pair [Fasta] (Maybe Int) -> Int -> Pair [Fasta] (Maybe Int)
+            lookup1 (ccovered :!: mcurk) h = case IM.lookup h imap of
+                    Nothing -> (ccovered :!: mcurk <|> Just h)
+                    Just prevs -> (filter (`faContainedIn` faseq) prevs ++ ccovered :!: Nothing)
+            (covered :!: minsertpos) = VU.foldl' lookup1 ([] :!: Nothing) hashes
+            -- If we failed to find an empty slot for the sequence, just use first one
+            insertpos = fromMaybe (VU.head hashes) minsertpos
 
-            covered = filter (`faContainedIn` faseq) (concat candidates)
-            -- Try to find an empty slot for the sequence. If it fails, just use first one
-            curk = headDef (head hashes) $ catMaybes available
         forM_ covered $ \c ->
             C.yield (B.concat [seqheader c, "\tC\t", sid])
-        findRepeats' (Just hashSize) (IM.alter (Just . (faseq:) . (fromMaybe [])) curk imap)
+        findRepeats' (IM.alter (Just . (faseq:) . (fromMaybe [])) insertpos imap)
 
 findRepeatsIn :: (MonadIO m, MonadBase IO m) => Int -> SizedHash -> C.Conduit Fasta m B.ByteString
 findRepeatsIn n (SizedHash hashSize imap) = CC.conduitVector 4096 .| asyncMapC n findRepeatsIn' .| CC.concat
@@ -157,14 +173,14 @@ main = do
         ModeSingle -> C.runConduitRes $
             C.sourceFile (ifile opts)
                 .| faConduit
-                .| findRepeats
+                .| findRepeats nthreads
                 .| C.unlinesAscii
                 .| CB.sinkFileCautious (ofile opts)
         ModeAcross -> do
             h <- C.runConduitRes $
                 C.sourceFile (ifile opts)
                     .| faConduit
-                    .| buildHash
+                    .| buildHash nthreads
             putStrLn "Built initial hash"
             extraFiles <-
                 C.runConduitRes $

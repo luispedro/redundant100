@@ -19,6 +19,7 @@ dependencies:
   - deepseq
   - directory
   - exceptions
+  - extra
   - filepath
   - filemanip
   - primitive
@@ -30,6 +31,8 @@ dependencies:
   - transformers-base
   - safe
   - safeio
+  - strict
+  - stringsearch
   - vector
   - vector-algorithms
 
@@ -52,3 +55,6 @@ executables:
 
   Remove:
     main: Remove.hs
+
+  CleanupHeaders:
+    main: CleanupHeaders.hs
