@@ -62,4 +62,4 @@ parseArgs argv = foldl' p (CmdArgs ifile ofile) flags
 main :: IO ()
 main = do
     CmdArgs ifile ofileBase <- parseArgs <$> getArgs
-    splitFiles ifile ofileBase (1000 * 1000)
+    splitFiles ifile ofileBase (10 * 1000 * 1000)
