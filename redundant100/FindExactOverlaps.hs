@@ -134,6 +134,7 @@ data CmdArgs = CmdArgs
                     , extraFilesFilesFrom :: FilePath
                     } deriving (Eq, Show)
 
+parseArgs :: [String] -> CmdArgs
 parseArgs argv = foldl' p (CmdArgs iarg oarg ModeSingle False 8 []) flags
     where
         (flags, args, _extraOpts) = getOpt Permute options argv
@@ -150,6 +151,8 @@ main :: IO ()
 main = do
     opts <- parseArgs <$> getArgs
     print opts
+    let nthreads = nJobs opts
+    setNumCapabilities nthreads
     case mode opts of
         ModeSingle -> C.runConduitRes $
             C.sourceFile (ifile opts)
@@ -175,7 +178,7 @@ main = do
                     C.runConduitRes $
                         C.sourceFile fafile
                         .| faConduit
-                        .| findRepeatsIn (nJobs opts) h
+                        .| findRepeatsIn nthreads h
                         .| C.unlinesAscii
                         .| C.sinkHandle hout
             putStrLn "Done."
