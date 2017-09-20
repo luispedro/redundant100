@@ -123,8 +123,8 @@ for i,p0 in enumerate(partials):
     others = partials[i+1:]
     for j,chunk in enumerate(block(others, 8)):
         oname=f'partials/copies/{i}_{j}.txt'
-        find_overlaps(p0, chunk, oname)
-        copies.append(oname)
+        fo = find_overlaps(p0, chunk, oname)
+        copies.append(value_after(oname, after=fo))
     final.append(
             remove_duplicates(p0, copies, p0.replace('/splits/', '/filtered/')))
 
