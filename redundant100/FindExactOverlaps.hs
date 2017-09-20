@@ -30,11 +30,13 @@ import Control.Monad.IO.Class
 import Control.Monad.Base
 import Data.Word
 import Data.Hash
+import qualified Data.HashTable.IO as HT
 
 import Data.BioConduit
 import Data.Conduit.Algorithms.Utils
 import Data.Conduit.Algorithms.Async
 
+type FastaIOHash = HT.CuckooHashTable Int [Fasta]
 type FastaMap = IM.IntMap [Fasta]
 data SizedHash = SizedHash !Int !FastaMap
 
@@ -88,25 +90,29 @@ buildHash nthreads = C.peek >>= \case
 
 findRepeats nthreads = do
     first <- C.peek
+    h <- liftIO HT.new
     whenJust first $ \faseq ->
         CC.conduitVector 4096
             .| asyncMapC nthreads (V.map (annotate (faseqLength faseq)))
             .| CC.concat
-            .| findRepeats' (IM.empty :: FastaMap)
+            .| findRepeats' h
   where
-    findRepeats' :: Monad m => FastaMap -> C.Conduit (Fasta,(VU.Vector Int)) m B.ByteString
+    findRepeats' :: MonadIO m => FastaIOHash -> C.Conduit (Fasta,(VU.Vector Int)) m B.ByteString
     findRepeats' imap = awaitJust $ \(faseq@(Fasta sid _), hashes) -> do
-        let lookup1 :: Pair [Fasta] (Maybe Int) -> Int -> Pair [Fasta] (Maybe Int)
-            lookup1 (ccovered :!: mcurk) h = case IM.lookup h imap of
+        let lookup1 :: Pair [Fasta] (Maybe Int) -> Int -> IO (Pair [Fasta] (Maybe Int))
+            lookup1 (ccovered :!: mcurk) h = do
+                val <- HT.lookup imap h
+                return $! case val of
                     Nothing -> (ccovered :!: mcurk <|> Just h)
                     Just prevs -> (filter (`faContainedIn` faseq) prevs ++ ccovered :!: Nothing)
-            (covered :!: minsertpos) = VU.foldl' lookup1 ([] :!: Nothing) hashes
-            -- If we failed to find an empty slot for the sequence, just use first one
-            insertpos = fromMaybe (VU.head hashes) minsertpos
+        (covered :!: minsertpos) <- liftIO $ VU.foldM lookup1 ([] :!: Nothing) hashes
+        -- If we failed to find an empty slot for the sequence, just use first one
+        let insertpos = fromMaybe (VU.head hashes) minsertpos
 
         forM_ covered $ \c ->
             C.yield (B.concat [seqheader c, "\tC\t", sid])
-        findRepeats' (IM.alter (Just . (faseq:) . (fromMaybe [])) insertpos imap)
+        liftIO $ HT.mutate imap insertpos (\curv -> (Just . (faseq:) . fromMaybe [] $ curv, ()))
+        findRepeats' imap
 
 findRepeatsIn :: (MonadIO m, MonadBase IO m) => Int -> SizedHash -> C.Conduit Fasta m B.ByteString
 findRepeatsIn n (SizedHash hashSize imap) = CC.conduitVector 4096 .| asyncMapC n findRepeatsIn' .| CC.concat
