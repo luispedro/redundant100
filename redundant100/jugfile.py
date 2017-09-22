@@ -6,6 +6,7 @@ import subprocess
 
 import ncpus
 
+IS_FILE_LIST = False
 try:
     exec(open('./config.py').read())
 except:
@@ -36,11 +37,13 @@ def value_after(val, after):
     return val
 
 @TaskGenerator
-def sort_size(ifile):
+def sort_size(ifile, is_file_list):
     from os import path
     base = path.basename(ifile)
     ofile = f'partials.{TAG}/{base}.sorted.fna'
-    jug_execute.f(['./bin/SortSizes', ifile, '-o', ofile])
+    args = [('-F' if is_file_list else '-i'), ifile
+            ,'-o', ofile]
+    jug_execute.f(['./bin/SortSizes'] + args)
     return ofile
 
 def extract_block_size(fname):
@@ -107,7 +110,7 @@ def concatenate_files(partials, oname):
                         break
                     output.write(chunk)
 
-input_sorted = sort_size(INPUT)
+input_sorted = sort_size(INPUT, IS_FILE_LIST)
 ofile_exact = f'partials.{TAG}/exact100.filtered.fna'
 exact_copy_files = f'partials.{TAG}/copies/exact_0.txt'
 r = jug_execute(['./bin/RemoveRepeats', input_sorted, '-o', ofile_exact, '-d', exact_copy_files])
