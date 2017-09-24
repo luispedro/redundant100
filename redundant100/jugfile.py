@@ -42,7 +42,8 @@ def sort_size(ifile, is_file_list):
     base = path.basename(ifile)
     ofile = f'partials.{TAG}/{base}.sorted.fna'
     args = [('-F' if is_file_list else '-i'), ifile
-            ,'-o', ofile]
+            ,'-o', ofile
+            ,'-j', str(ncpus.get_ncpus())]
     jug_execute.f(['./bin/SortSizes'] + args)
     return ofile
 
