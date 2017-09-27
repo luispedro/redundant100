@@ -1,8 +1,13 @@
 from os import makedirs
+from os import path
 from jug import Task, TaskGenerator, barrier
 from jug.utils import jug_execute
 from glob import glob
 import subprocess
+from jug.hooks import exit_checks
+
+exit_checks.exit_if_file_exists('jug.exit.marker')
+
 
 import ncpus
 
@@ -111,7 +116,51 @@ def concatenate_files(partials, oname):
                         break
                     output.write(chunk)
 
-input_sorted = sort_size(INPUT, IS_FILE_LIST)
+@TaskGenerator
+def sort_size_files(filelist, ofile):
+    from os import path, unlink
+    import tempfile
+    n = tempfile.NamedTemporaryFile(mode='wt', delete=False)
+    for f in filelist:
+        n.write(f)
+    n.close()
+    args = ['-F', n.name
+            ,'-o', ofile
+            ,'-j', str(ncpus.get_ncpus())]
+    jug_execute.f(['./bin/SortSizes'] + args)
+    unlink(n.name)
+    return ofile
+
+@TaskGenerator
+def merge_blocks(filelist, ofile):
+    from os import path, unlink
+    import tempfile
+    n = tempfile.NamedTemporaryFile(mode='wt', delete=False)
+    for f in filelist:
+        n.write(f'{f}\n')
+    n.close()
+    args = ['-F', n.name
+            ,'-o', ofile
+            ,'-j', str(ncpus.get_ncpus())]
+    jug_execute.f(['./bin/MergeSizes'] + args)
+    unlink(n.name)
+    return ofile
+
+if IS_FILE_LIST:
+    ifiles = [line for line in open(INPUT)]
+    if len(ifiles) > 400:
+        blocks = list(block(ifiles, 400))
+        sorted_blocks = []
+        for i,b in enumerate(blocks):
+            sorted_blocks.append(sort_size_files(b, f'partials.{TAG}/sorted.block.{i}.fna'))
+        base = path.basename(INPUT)
+        ofile = f'partials.{TAG}/{base}.sorted.fna'
+        input_sorted = merge_blocks(sorted_blocks, ofile)
+    else:
+        input_sorted = sort_size(INPUT, IS_FILE_LIST)
+else:
+    input_sorted = sort_size(INPUT, IS_FILE_LIST)
+
 ofile_exact = f'partials.{TAG}/exact100.filtered.fna'
 exact_copy_files = f'partials.{TAG}/copies/exact_0.txt'
 r = jug_execute(['./bin/RemoveRepeats', input_sorted, '-o', ofile_exact, '-d', exact_copy_files])

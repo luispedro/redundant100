@@ -59,3 +59,5 @@ executables:
 
   CleanupHeaders:
     main: CleanupHeaders.hs
+  MergeSizes:
+    main: MergeSizes.hs
