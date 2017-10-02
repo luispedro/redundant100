@@ -3,3 +3,4 @@
 .jugstatus.sqlite3
 .stack-work/
 logs/
+jugfile.jugdata
