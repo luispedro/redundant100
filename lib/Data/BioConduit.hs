@@ -47,7 +47,7 @@ faConduit' = C.await >>= \case
     getdata !n header toks = C.await >>= \case
                                 Nothing -> C.yield $ Fasta header (B.concat $ reverse toks)
                                 Just next
-                                    | B.null next -> liftIO $ throwIO (AssertionFailed $ "Unexpected empty string at line " ++ show (n+1))
+                                    | B.null next -> liftIO $ throwIO (AssertionFailed $ "Unexpected empty string at line " ++ show (n+1) ++ " (expected header line).")
                                     | B.head next == greaterThanSign -> do
                                             C.yield $ Fasta header (B.concat $ reverse toks)
                                             getdata (n+1) (B.drop 1 next) []
