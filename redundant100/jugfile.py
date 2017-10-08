@@ -164,7 +164,7 @@ else:
 ofile_exact = f'partials.{TAG}/exact100.filtered.fna'
 exact_copy_files = f'partials.{TAG}/copies/exact_0.txt'
 r = jug_execute(['./bin/RemoveRepeats', input_sorted, '-o', ofile_exact, '-d', exact_copy_files])
-jug_execute(['./bin/SplitBlocks', ofile_exact, '-d', f'partials.{TAG}/splits/block'], run_after=r)
+jug_execute(['./bin/SplitBlocks', ofile_exact, '-b', str(300*10*1000*1000),'-d', f'partials.{TAG}/splits/block'], run_after=r)
 
 barrier()
 partials = glob(f'partials.{TAG}/splits/*.fna')
