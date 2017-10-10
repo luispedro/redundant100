@@ -88,17 +88,17 @@ buildHash nthreads = C.peek >>= \case
                 hashes' = VU.toList hashes
                 curk = headDef (head hashes') (filter (flip IM.notMember imap) hashes')
 
-findRepeats nthreads = do
+findOverlapsSingle nthreads = do
     first <- C.peek
     h <- liftIO HT.new
     whenJust first $ \faseq ->
         CC.conduitVector 4096
             .| asyncMapC nthreads (V.map (annotate (faseqLength faseq)))
             .| CC.concat
-            .| findRepeats' h
+            .| findOverlapsSingle' h
   where
-    findRepeats' :: MonadIO m => FastaIOHash -> C.Conduit (Fasta,(VU.Vector Int)) m B.ByteString
-    findRepeats' imap = awaitJust $ \(faseq@(Fasta sid _), hashes) -> do
+    findOverlapsSingle' :: MonadIO m => FastaIOHash -> C.Conduit (Fasta, VU.Vector Int) m B.ByteString
+    findOverlapsSingle' imap = awaitJust $ \(faseq@(Fasta sid _), hashes) -> do
         let lookup1 :: Pair [Fasta] (Maybe Int) -> Int -> IO (Pair [Fasta] (Maybe Int))
             lookup1 (ccovered :!: mcurk) h = do
                 val <- HT.lookup imap h
@@ -112,18 +112,18 @@ findRepeats nthreads = do
         forM_ covered $ \c ->
             C.yield (B.concat [seqheader c, "\tC\t", sid])
         liftIO $ HT.mutate imap insertpos (\curv -> (Just . (faseq:) . fromMaybe [] $ curv, ()))
-        findRepeats' imap
+        findOverlapsSingle' imap
 
-findRepeatsIn :: (MonadIO m, MonadBase IO m) => Int -> SizedHash -> C.Conduit Fasta m B.ByteString
-findRepeatsIn n (SizedHash hashSize imap) = CC.conduitVector 4096 .| asyncMapC n findRepeatsIn' .| CC.concat
+findOverlapsAcross :: (MonadIO m, MonadBase IO m) => Int -> SizedHash -> C.Conduit Fasta m B.ByteString
+findOverlapsAcross n (SizedHash hashSize imap) = CC.conduitVector 4096 .| asyncMapC n findOverlapsAcross' .| CC.concat
     where
-        findRepeatsIn' :: V.Vector Fasta -> V.Vector B.ByteString
-        findRepeatsIn' = V.concatMap findRepeatsIn'1
-        findRepeatsIn'1 :: Fasta -> V.Vector B.ByteString
-        findRepeatsIn'1 faseq@(Fasta sid _) = V.fromList [B.concat [seqheader c, "\tC\t", sid] | c <- covered]
+        findOverlapsAcross' :: V.Vector Fasta -> V.Vector B.ByteString
+        findOverlapsAcross' = V.concatMap findOverlapsAcross'1
+        findOverlapsAcross'1 :: Fasta -> V.Vector B.ByteString
+        findOverlapsAcross'1 faseq@(Fasta sid _) = V.fromList [B.concat [seqheader c, "\tC\t", sid] | c <- covered]
             where
                 hashes = allHashes hashSize faseq
-                candidates = concat $ flip map hashes $ \h -> IM.findWithDefault [] h imap
+                candidates = flip concatMap hashes $ \h -> IM.findWithDefault [] h imap
                 covered = filter (`faContainedIn` faseq) candidates
 
 data CmdFlags = OutputFile FilePath
@@ -179,7 +179,7 @@ main = do
         ModeSingle -> C.runConduitRes $
             C.sourceFile (ifile opts)
                 .| faConduit
-                .| findRepeats nthreads
+                .| findOverlapsSingle nthreads
                 .| C.unlinesAscii
                 .| CB.sinkFileCautious (ofile opts)
         ModeAcross -> do
@@ -200,7 +200,7 @@ main = do
                     C.runConduitRes $
                         C.sourceFile fafile
                         .| faConduit
-                        .| findRepeatsIn nthreads h
+                        .| findOverlapsAcross nthreads h
                         .| C.unlinesAscii
                         .| C.sinkHandle hout
             putStrLn "Done."
