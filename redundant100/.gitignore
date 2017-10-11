@@ -1,5 +1,6 @@
 redundant100.cabal
 config.py
 /bin/
-/partials/
+/partials.*
+/partials.*/
 /data/
