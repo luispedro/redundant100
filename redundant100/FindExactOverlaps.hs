@@ -29,7 +29,6 @@ import Data.Maybe
 import Data.Bits
 import Data.List
 import Control.Monad.IO.Class
-import Control.Monad.ST
 import Control.Monad.Base
 import Data.Word
 import Data.Hash
@@ -44,11 +43,12 @@ import Data.Conduit.Algorithms.Async
 hashCombine :: Word64 -> Word64 -> Word64
 hashCombine a b = rotate a 1 `xor` b
 
-rollall :: Int -> B.ByteString -> [Int]
+rollall :: Int -> B.ByteString -> VU.Vector Int
 rollall n bs
-    | n > B.length bs = []
-    | otherwise = runST $ do
+    | n > B.length bs = VU.empty
+    | otherwise = VU.create $ do
         hashes <- VUM.new n
+        res <- VUM.new (B.length bs - n + 1)
         let inithash ch p
                 | p == n - 1 = return (ch :: Word64)
                 | otherwise = do
@@ -59,17 +59,18 @@ rollall n bs
             initial_hash :: Word64
             initial_hash = (asWord64 $ hash ()) `hashCombine` (asWord64 $ hash n)
         VUM.unsafeWrite hashes 0 initial_hash
-        ch <- inithash initial_hash 0
-        let iter acc@(ch:_) p pix
-                | p == B.length bs = return . tail . map (fromIntegral . toInteger) $ reverse acc
+        ich <- inithash initial_hash 0
+        let iter ch p pix
+                | p == B.length bs = return res
                 | otherwise =  do
                     let ck = asWord64 (hash $ B.index bs p)
                     cl <- VUM.unsafeRead hashes pix
                     let ch' :: Word64
                         ch' = ch `hashCombine` (rotate cl n `xor` ck)
                     VUM.unsafeWrite hashes pix ck
-                    iter (ch':acc) (p+1) (if pix + 1 == n then 0 else pix + 1)
-        iter [ch] (n-1) 0
+                    VUM.write res (p - n + 1) (fromIntegral . toInteger $ ch')
+                    iter ch' (p+1) (if pix + 1 == n then 0 else pix + 1)
+        iter ich (n-1) 0
 
 
 type FastaIOHash = HT.CuckooHashTable Int [Fasta]
@@ -93,7 +94,7 @@ printEvery10k = printEvery10k' (1 :: Int) (10000 :: Int)
                 printEvery10k' n (r - 1)
 
 annotate :: Int -> Fasta -> (Fasta, (VU.Vector Int))
-annotate hashSize fa@(Fasta _ fad) = (fa, VU.fromList (rollall hashSize fad))
+annotate hashSize fa@(Fasta _ fad) = (fa, rollall hashSize fad)
 
 buildHash :: (MonadIO m, MonadBase IO m) => Int -> C.Sink Fasta m SizedHash
 buildHash nthreads = C.peek >>= \case
@@ -148,7 +149,7 @@ findOverlapsAcross n (SizedHash hashSize imap) = CC.conduitVector 4096 .| asyncM
                 -- Starting in containers 0.5.8, we could use the
                 -- IM.restrictKeys function to "lookup" all the keys at once
                 hashes = rollall hashSize (seqdata faseq)
-                candidates = flip concatMap hashes $ \h -> IM.findWithDefault [] h imap
+                candidates = flip concatMap (VU.toList hashes) $ \h -> IM.findWithDefault [] h imap
                 covered = filter (`faContainedIn` faseq) candidates
 
 data CmdFlags = OutputFile FilePath
