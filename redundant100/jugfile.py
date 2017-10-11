@@ -1,5 +1,4 @@
-from os import makedirs
-from os import path
+from os import makedirs, path, environ
 from jug import Task, TaskGenerator, barrier
 from jug.utils import jug_execute
 from glob import glob
@@ -7,6 +6,8 @@ import subprocess
 from jug.hooks import exit_checks
 
 exit_checks.exit_if_file_exists('jug.exit.marker')
+if 'MAX_JUG_TASKS' in environ:
+    exit_checks.exit_after_n_tasks(int(environ['MAX_JUG_TASKS']))
 
 
 import ncpus
@@ -25,7 +26,7 @@ TAG
 ''')
     exit(1)
 
-#@Task
+@Task
 def make():
     jug_execute.f(['make'])
 
@@ -149,7 +150,7 @@ def merge_blocks(filelist, ofile):
 if IS_FILE_LIST:
     ifiles = [line for line in open(INPUT)]
     if len(ifiles) > 400:
-        blocks = list(block(ifiles, 400))
+        blocks = list(block(ifiles, 200))
         sorted_blocks = []
         for i,b in enumerate(blocks):
             sorted_blocks.append(sort_size_files(b, f'partials.{TAG}/sorted.block.{i}.fna'))
@@ -170,6 +171,7 @@ barrier()
 partials = glob(f'partials.{TAG}/splits/*.fna')
 partials.sort(key=extract_block_size)
 
+allcopies = [exact_copy_files]
 final = []
 for i,p0 in enumerate(partials):
     oname = f'partials.{TAG}/copies/{i}_self.txt'
@@ -182,5 +184,7 @@ for i,p0 in enumerate(partials):
         copies.append(value_after(oname, after=fo))
     final.append(
             remove_duplicates(p0, copies, p0.replace('/splits/', '/filtered/')))
+    allcopies.extend(copies)
 
 concatenate_files(final, OUTPUT)
+concatenate_files(allcopies, OUTPUT_COPIES)
