@@ -39,7 +39,7 @@ dependencies:
 
 
 source-dirs:
-  - ./
+  - ./src
 
 executables:
   SortSizes:
