@@ -6,7 +6,6 @@ module Data.UnionFind
     , flatten
     ) where
 
-import qualified Data.ByteString as B
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Control.Monad (forM_, void)
 
@@ -24,16 +23,18 @@ link uf@(UnionFind v) ix0 ix1 = do
     r0 <- rep uf ix0
     r1 <- rep uf ix1
     VUM.write v r0 r1
+{-# INLINEABLE link #-}
 
 rep :: UnionFind -> Int -> IO Int
-rep (UnionFind v) ix = do
+rep uf@(UnionFind v) ix = do
     c <- VUM.read v ix
     if c == ix
         then return ix
         else do
-            c' <- VUM.read v c
+            c' <- rep uf c
             VUM.write v ix c'
             return c'
+{-# INLINEABLE rep #-}
 
 flatten :: UnionFind -> IO ()
 flatten uf@(UnionFind v) = forM_ [0..VUM.length v - 1] $ void . (rep uf)
