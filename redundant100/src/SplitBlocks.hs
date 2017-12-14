@@ -85,7 +85,7 @@ main = do
         (Just _, Just _) -> do
             error "Cannot use both nr-seqs and nr-bps arguments"
         (Nothing, Nothing) -> do
-            error "Must use either both nr-seqs and nr-bps arguments"
+            error "Must use either both nr-seqs or nr-bps arguments"
         (Just n, Nothing) -> return $ NSeqs n
         (Nothing, Just b) -> return $ NBPs b
     splitFiles ifile ofileBase isolationMode
