@@ -4,3 +4,4 @@ config.py
 /partials.*
 /partials.*/
 /data/
+/scripts/
