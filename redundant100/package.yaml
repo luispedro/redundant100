@@ -4,7 +4,17 @@ synopsis:       Redundant gene clustering
 category:       Bioinformatics
 license:        GPL-3
 maintainer:     Luis Pedro Coelho <coelho@embl.de>
-ghc-options:    -Wall -O2 -threaded -fwarn-tabs
+ghc-options:
+  - -Wall
+  - -Wcompat
+  - -fwarn-tabs
+  - -fno-warn-missing-signatures
+  - -threaded
+  - -O2
+  - -fno-full-laziness
+  - -rtsopts
+  - ! '"-with-rtsopts=-A64m -n4m -H"'
+
 
 dependencies:
   - base >= 4.7 && < 5
