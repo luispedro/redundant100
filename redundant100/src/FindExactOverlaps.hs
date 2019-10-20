@@ -128,7 +128,7 @@ findOverlapsSingle nthreads = do
                 val <- HT.lookup imap h
                 return $! case val of
                     Nothing -> (ccovered :!: mcurk <|> Just h)
-                    Just prevs -> (filter (`faContainedIn` faseq) prevs ++ ccovered :!: Nothing)
+                    Just prevs -> (filter (`faContainedIn` faseq) prevs ++ ccovered :!: mcurk)
         (covered :!: minsertpos) <- liftIO $ VU.foldM lookup1 ([] :!: Nothing) hashes
         -- If we failed to find an empty slot for the sequence, just use first one
         let insertpos = fromMaybe (VU.head hashes) minsertpos
