@@ -1,16 +1,14 @@
 #!/usr/bin/env stack
--- stack --resolver lts-8.13 script
+-- stack --resolver lts-16.18 script
 {-# LANGUAGE LambdaCase, OverloadedStrings, BangPatterns #-}
 {-# LANGUAGE ScopedTypeVariables, FlexibleContexts #-}
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString.Search as BSearch
-import qualified Data.Conduit.Combinators as C
 import qualified Data.Conduit.Combinators as CC
 import qualified Data.Conduit.List as CL
 import qualified Data.Conduit.Binary as C
-import qualified Data.Conduit.Binary as CB
-import qualified Data.Conduit as C
+import qualified Conduit as C
 import           Data.Conduit ((.|))
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
@@ -141,8 +139,8 @@ printEvery10k = printEvery10k' (1 :: Int) (10000 :: Int)
 annotate :: Int -> Fasta -> (Fasta, (VU.Vector Int))
 annotate hashSize fa@(Fasta _ fad) = (fa, rollall hashSize fad)
 
-buildHash :: (MonadIO m, MonadBase IO m) => Int -> C.Sink Fasta m SizedHash
-buildHash nthreads = C.peek >>= \case
+buildHash :: (MonadIO m, C.PrimMonad m, C.MonadUnliftIO m) => Int -> C.Sink Fasta m SizedHash
+buildHash nthreads = CC.peek >>= \case
         Nothing -> error "Empty stream"
         Just first -> do
             let hashSize = faseqLength first
@@ -160,8 +158,9 @@ buildHash nthreads = C.peek >>= \case
                 hashes' = VU.toList hashes
                 curk = headDef (head hashes') (filter (flip IM.notMember imap) hashes')
 
+findOverlapsSingle :: (MonadIO m, C.PrimMonad m) => Int -> C.Conduit Fasta m B.ByteString
 findOverlapsSingle nthreads = do
-    first <- C.peek
+    first <- CC.peek
     h <- liftIO HT.new
     whenJust first $ \faseq ->
         CC.conduitVector 4096
@@ -181,12 +180,11 @@ findOverlapsSingle nthreads = do
         -- If we failed to find an empty slot for the sequence, just use first one
         let insertpos = fromMaybe (VU.head hashes) minsertpos
 
-        forM_ covered $ \c ->
-            C.yield (B.concat [seqheader c, "\tC\t", sid])
+        C.yield $ B.concat [B.concat [seqheader c, "\tC\t", sid, "\n"] | c <- covered]
         liftIO $ HT.mutate imap insertpos (\curv -> (Just . (faseq:) . fromMaybe [] $ curv, ()))
         findOverlapsSingle' imap
 
-findOverlapsAcross :: (MonadIO m, MonadBase IO m) => Int -> SizedHash -> C.Conduit Fasta m B.ByteString
+findOverlapsAcross :: (MonadIO m, C.PrimMonad m) => Int -> SizedHash -> C.Conduit Fasta m B.ByteString
 findOverlapsAcross n (SizedHash hashSize imap) = CC.conduitVector 4096 .| asyncMapC (2 * n) findOverlapsAcross'
     where
         findOverlapsAcross' :: V.Vector Fasta -> B.ByteString
@@ -250,12 +248,14 @@ main = do
     let nthreads = nJobs opts
     setNumCapabilities nthreads
     case mode opts of
-        ModeSingle -> C.runConduitRes $
-            C.sourceFile (ifile opts)
-                .| faConduit
-                .| findOverlapsSingle nthreads
-                .| C.unlinesAscii
-                .| CB.sinkFileCautious (ofile opts)
+        ModeSingle ->
+            C.runResourceT $ withOutputFile (ofile opts) $ \hout ->
+                withPossiblyCompressedFile (ifile opts) $ \cinput ->
+                    C.runConduit $
+                        cinput
+                        .| faConduit
+                        .| findOverlapsSingle nthreads
+                        .| C.sinkHandle hout
         ModeAcross -> do
             h <- C.runConduitRes $
                 C.sourceFile (ifile opts)
