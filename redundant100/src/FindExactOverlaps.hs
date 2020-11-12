@@ -14,6 +14,7 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import qualified Data.IntMap.Strict as IM
+import qualified Data.IntSet as IS
 import           Safe (headDef, atDef)
 import           System.IO.SafeWrite (withOutputFile)
 import           Data.Strict.Tuple (Pair(..))
@@ -27,7 +28,6 @@ import Data.Maybe
 import Data.Bits
 import Data.List
 import Control.Monad.IO.Class
-import Control.Monad.Base
 import Data.Word
 import qualified Data.HashTable.IO as HT
 
@@ -117,7 +117,7 @@ rollall n bs
 
 
 type FastaIOHash = HT.CuckooHashTable Int [Fasta]
-type FastaMap = IM.IntMap [Fasta -> Maybe B.ByteString]
+type FastaMap = IM.IntMap [Fasta]
 data SizedHash = SizedHash !Int !FastaMap
 
 faContainedIn :: Fasta -> Fasta -> Bool
@@ -149,11 +149,8 @@ buildHash nthreads = CC.peek >>= \case
                     .| asyncMapC (2 * nthreads) (V.map (annotate hashSize))
                     .| CL.fold insertmany IM.empty)
     where
-        matcher (Fasta h s) = let
-             test = B.isInfixOf s
-           in \(Fasta _ seq') -> if test seq' then Just h else Nothing
         insertmany imap = V.foldl addHash imap
-        addHash imap (faseq, hashes) = IM.alter (Just . (matcher faseq:) . (fromMaybe [])) curk imap
+        addHash imap (faseq, hashes) = IM.alter (Just . (faseq:) . (fromMaybe [])) curk imap
             where
                 hashes' = VU.toList hashes
                 curk = headDef (head hashes') (filter (flip IM.notMember imap) hashes')
@@ -192,11 +189,17 @@ findOverlapsAcross n (SizedHash hashSize imap) = CC.conduitVector 4096 .| asyncM
         findOverlapsAcross'1 :: Fasta -> [B.ByteString]
         findOverlapsAcross'1 faseq@(Fasta sid _) = concat [[c, "\tC\t", sid, "\n"] | c <- covered]
             where
-                -- Starting in containers 0.5.8, we could use the
-                -- IM.restrictKeys function to "lookup" all the keys at once
-                hashes = rollall hashSize (seqdata faseq)
-                candidates = flip concatMap (VU.toList hashes) $ \h -> IM.findWithDefault [] h imap
-                covered = mapMaybe ($ faseq) candidates
+                hashes :: IS.IntSet
+                hashes = IS.fromList . VU.toList $ rollall hashSize (seqdata faseq)
+
+                candidates :: [Fasta]
+                candidates = concat . IM.elems $ IM.restrictKeys imap hashes
+
+                covered :: [B.ByteString]
+                covered = mapMaybe (`matches` faseq) candidates
+                matches (Fasta h s) (Fasta _ seq')
+                    | B.isInfixOf s seq' = Just h
+                    | otherwise = Nothing
 
 data CmdFlags = OutputFile FilePath
                 | InputFile FilePath
