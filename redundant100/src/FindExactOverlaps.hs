@@ -257,10 +257,12 @@ main = do
                         .| findOverlapsSingle nthreads
                         .| C.sinkHandle hout
         ModeAcross -> do
-            h <- C.runConduitRes $
-                C.sourceFile (ifile opts)
-                    .| faConduit
-                    .| buildHash nthreads
+            h <- C.runResourceT $
+                withPossiblyCompressedFile (ifile opts) $ \cin ->
+                    C.runConduit $
+                        cin
+                        .| faConduit
+                        .| buildHash nthreads
             putStrLn "Built initial hash"
             extraFiles <-
                 C.runConduitRes $
@@ -271,9 +273,10 @@ main = do
             withOutputFile (ofile opts) $ \hout ->
                 forM_ extraFiles $ \fafile -> do
                     putStrLn ("Handling file "++fafile)
-                    C.runConduitRes $
-                        C.sourceFile fafile
-                        .| faConduit
-                        .| findOverlapsAcross nthreads h
-                        .| C.sinkHandle hout
+                    C.runResourceT $ withPossiblyCompressedFile fafile $ \cinput ->
+                        C.runConduit $
+                            cinput
+                            .| faConduit
+                            .| findOverlapsAcross nthreads h
+                            .| C.sinkHandle hout
             putStrLn "Done."
