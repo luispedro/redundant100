@@ -25,7 +25,6 @@ dependencies:
   - conduit-extra
   - conduit-combinators
   - containers
-  - data-hash
   - deepseq
   - directory
   - exceptions
@@ -34,6 +33,7 @@ dependencies:
   - filemanip
   - hashtables
   - primitive
+  - inline-c
   - MissingH
   - resourcet
   - temporary
@@ -60,6 +60,7 @@ executables:
 
   FindExactOverlaps:
     main: FindExactOverlaps.hs
+    c-sources: src/FindExactOverlaps.c
 
   RemoveRepeats:
     main: RemoveRepeats.hs
