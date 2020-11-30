@@ -108,8 +108,16 @@ extern "C" void destroy_hash(void* h) {
     delete reinterpret_cast<hash_type*>(h);
 }
 
-extern "C" void insert_hash(void * h, uint64_t key, const char* header, const char* s) {
-   reinterpret_cast<hash_type*>(h)->emplace(key, Fasta(header, s));
+extern "C" void insert_hash(void * h, uint64_t* keys, const int n_keys, const char* header, const char* s) {
+   hash_type& ha = *reinterpret_cast<hash_type*>(h);
+   for (int i = 0; i < n_keys; ++i) {
+        const uint64_t key = keys[i];
+        if (!ha.count(key)) {
+            ha.emplace(key, Fasta(header, s));
+            return;
+        }
+    }
+    ha.emplace(keys[0], Fasta(header, s));
 }
 
 extern "C" char* write_matches(const void* h, const int n, const char* header_p, const int header_n, const char* seq_p, const int seq_n) {

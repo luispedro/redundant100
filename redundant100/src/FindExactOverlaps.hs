@@ -36,8 +36,8 @@ import Data.Maybe
 import Data.List
 import Control.Monad.IO.Class
 import qualified Data.HashTable.IO as HT
-import qualified GHC.Ptr as Ptr
-import Data.Word
+import Foreign.Ptr
+import Foreign.ForeignPtr
 
 import Data.BioConduit
 import Data.Conduit.Algorithms.Utils
@@ -59,7 +59,7 @@ rollall n bs = VS.unsafeCast . unsafeDupablePerformIO $ do
 
 type FastaIOHash = HT.CuckooHashTable Int [Fasta]
 
-type ExternalHash = Ptr.Ptr ()
+type ExternalHash = ForeignPtr ()
 data SizedHash = SizedHash !Int !ExternalHash
 
 faContainedIn :: Fasta -> Fasta -> Bool
@@ -81,26 +81,30 @@ printEvery10k = printEvery10k' (1 :: Int) (10000 :: Int)
 annotate :: Int -> Fasta -> (Fasta, (VS.Vector Int))
 annotate hashSize fa@(Fasta _ fad) = (fa, rollall hashSize fad)
 
+
+foreign import ccall "FindExactOverlaps.h &destroy_hash"
+    c_destroy_hash :: FunPtr (Ptr () -> IO ())
+
 buildHash :: (MonadIO m, C.PrimMonad m, C.MonadUnliftIO m) => Int -> C.ConduitT Fasta C.Void m SizedHash
 buildHash nthreads = CC.peek >>= \case
         Nothing -> error "Empty stream"
         Just first -> do
             let hashSize = faseqLength first
-            nh <- liftIO $ [CU.block| void * { init_hash(); } |]
+            nh <- liftIO $ do
+                nh' <- [CU.block| void * { init_hash(); } |]
+                newForeignPtr c_destroy_hash nh'
             C.conduitVector 4094
                 .| asyncMapC (2 * nthreads) (V.map (annotate hashSize))
                 .| CC.mapM_ (insertmany nh)
             return $! SizedHash hashSize nh
     where
         insertmany :: MonadIO m => ExternalHash -> V.Vector (Fasta, VS.Vector Int) -> m ()
-        insertmany imap = V.mapM_ (addHash imap)
-        addHash nh (faseq, hashes) = do
-            let hashes' = VS.toList hashes
-            --let curk = fromEnum $ headDef (head hashes') (filter (flip IM.notMember imap) hashes')
-            let curk = toEnum $ head hashes'
-            liftIO $ B.useAsCString (seqheader faseq) $ \h -> B.useAsCString (seqdata faseq) $ \s ->
+        insertmany imap v = liftIO $ withForeignPtr imap $ \imap' -> V.mapM_ (addHash imap') v
+        addHash :: Ptr () -> (Fasta, VS.Vector Int) -> IO ()
+        addHash nh (faseq, hashes) = B.useAsCString (seqheader faseq) $ \h -> B.useAsCString (seqdata faseq) $ \s -> do
+                let hashes' = VS.unsafeCast hashes
                 [CU.block| void {
-                    insert_hash($(void* nh), static_cast<uint64_t>($(int64_t curk)), $(const char* h), $(const char* s));
+                    insert_hash($(void* nh), $vec-ptr:(uint64_t* hashes'), $vec-len:hashes, $(const char* h), $(const char* s));
                 }|]
 
 findOverlapsSingle :: (MonadIO m, C.PrimMonad m) => Int -> C.ConduitT Fasta B.ByteString m ()
@@ -135,11 +139,11 @@ findOverlapsAcross n (SizedHash hashSize imap) = CC.conduitVector 4096 .| asyncM
         findOverlapsAcross' :: V.Vector Fasta -> V.Vector B.ByteString
         findOverlapsAcross' = V.map findOverlapsAcross'1
         findOverlapsAcross'1 :: Fasta -> B.ByteString
-        findOverlapsAcross'1 faseq = unsafeDupablePerformIO $ do
+        findOverlapsAcross'1 faseq = unsafeDupablePerformIO $ withForeignPtr imap $ \imap' -> do
                 let hashSize' = toEnum hashSize
                     h = seqheader faseq
                     s = seqdata faseq
-                r <- [CU.block| char * { write_matches($(const void* imap), $(int hashSize'),
+                r <- [CU.block| char * { write_matches($(const void* imap'), $(int hashSize'),
                         ($bs-ptr:h), $bs-len:h,
                         ($bs-ptr:s), $bs-len:s);
                         }|]
