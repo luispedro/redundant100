@@ -6,10 +6,12 @@
 {-# LANGUAGE TemplateHaskell #-}
 
 import qualified Language.C.Inline as C
+import qualified Language.C.Inline.Cpp as C
 import qualified Language.C.Inline.Unsafe as CU
 
 
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Unsafe as BU
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString.Search as BSearch
 import qualified Data.Conduit.Combinators as CC
@@ -20,14 +22,11 @@ import           Data.Conduit ((.|))
 import qualified Data.Vector as V
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Storable.Mutable as VSM
-import qualified Data.IntMap.Strict as IM
-import qualified Data.IntSet as IS
-import           Safe (headDef, atDef)
+import           Safe (atDef)
 import           System.IO.SafeWrite (withOutputFile)
 import           Data.Strict.Tuple (Pair(..))
 import           Control.Concurrent (setNumCapabilities)
 import           System.IO.Unsafe (unsafeDupablePerformIO)
-import           Control.Monad.ST.Unsafe (unsafeIOToST)
 import           System.Environment
 import           Control.Monad.Extra (whenJust)
 import           Control.Applicative ((<|>))
@@ -37,7 +36,7 @@ import Data.Maybe
 import Data.List
 import Control.Monad.IO.Class
 import qualified Data.HashTable.IO as HT
-import Data.Int
+import qualified GHC.Ptr as Ptr
 import Data.Word
 
 import Data.BioConduit
@@ -45,7 +44,8 @@ import Data.Conduit.Algorithms.Utils
 import Data.Conduit.Algorithms.Async
 
 
-C.context (C.baseCtx <> C.bsCtx <> C.vecCtx)
+C.context (C.baseCtx <> C.bsCtx <> C.vecCtx <> C.cppCtx)
+C.include "FindExactOverlaps.h"
 C.include "<stdint.h>"
 
 rollall :: Int -> B.ByteString -> VS.Vector Int
@@ -53,13 +53,14 @@ rollall n bs = VS.unsafeCast . unsafeDupablePerformIO $ do
         let n' :: C.CInt
             n' = toEnum n
         res <- VSM.new (B.length bs - n + 1)
-        [CU.block| void { rollhash($bs-ptr:bs, $bs-len:bs, $(int n'), $vec-ptr:(int64_t* res)); } |]
+        [CU.block| void { rollhash(reinterpret_cast<const unsigned char*>($bs-ptr:bs), $bs-len:bs, $(int n'), $vec-ptr:(uint64_t* res)); } |]
         VS.unsafeFreeze res
 
 
 type FastaIOHash = HT.CuckooHashTable Int [Fasta]
-type FastaMap = IM.IntMap [Fasta]
-data SizedHash = SizedHash !Int !FastaMap
+
+type ExternalHash = Ptr.Ptr ()
+data SizedHash = SizedHash !Int !ExternalHash
 
 faContainedIn :: Fasta -> Fasta -> Bool
 faContainedIn (Fasta _ da) (Fasta _ db) = not . null $ BSearch.indices da db
@@ -80,21 +81,27 @@ printEvery10k = printEvery10k' (1 :: Int) (10000 :: Int)
 annotate :: Int -> Fasta -> (Fasta, (VS.Vector Int))
 annotate hashSize fa@(Fasta _ fad) = (fa, rollall hashSize fad)
 
-buildHash :: (MonadIO m, C.PrimMonad m, C.MonadUnliftIO m) => Int -> C.Sink Fasta m SizedHash
+buildHash :: (MonadIO m, C.PrimMonad m, C.MonadUnliftIO m) => Int -> C.ConduitT Fasta C.Void m SizedHash
 buildHash nthreads = CC.peek >>= \case
         Nothing -> error "Empty stream"
         Just first -> do
             let hashSize = faseqLength first
-            SizedHash hashSize <$>
-                    (C.conduitVector 4096
-                    .| asyncMapC (2 * nthreads) (V.map (annotate hashSize))
-                    .| CL.fold insertmany IM.empty)
+            nh <- liftIO $ [CU.block| void * { init_hash(); } |]
+            C.conduitVector 4094
+                .| asyncMapC (2 * nthreads) (V.map (annotate hashSize))
+                .| CC.mapM_ (insertmany nh)
+            return $! SizedHash hashSize nh
     where
-        insertmany imap = V.foldl addHash imap
-        addHash imap (faseq, hashes) = IM.alter (Just . (faseq:) . (fromMaybe [])) curk imap
-            where
-                hashes' = VS.toList hashes
-                curk = headDef (head hashes') (filter (flip IM.notMember imap) hashes')
+        insertmany :: MonadIO m => ExternalHash -> V.Vector (Fasta, VS.Vector Int) -> m ()
+        insertmany imap = V.mapM_ (addHash imap)
+        addHash nh (faseq, hashes) = do
+            let hashes' = VS.toList hashes
+            --let curk = fromEnum $ headDef (head hashes') (filter (flip IM.notMember imap) hashes')
+            let curk = toEnum $ head hashes'
+            liftIO $ B.useAsCString (seqheader faseq) $ \h -> B.useAsCString (seqdata faseq) $ \s ->
+                [CU.block| void {
+                    insert_hash($(void* nh), static_cast<uint64_t>($(int64_t curk)), $(const char* h), $(const char* s));
+                }|]
 
 findOverlapsSingle :: (MonadIO m, C.PrimMonad m) => Int -> C.ConduitT Fasta B.ByteString m ()
 findOverlapsSingle nthreads = do
@@ -122,25 +129,21 @@ findOverlapsSingle nthreads = do
         liftIO $ HT.mutate imap insertpos (\curv -> (Just . (faseq:) . fromMaybe [] $ curv, ()))
         findOverlapsSingle' imap
 
-findOverlapsAcross :: (MonadIO m, C.PrimMonad m) => Int -> SizedHash -> C.Conduit Fasta m B.ByteString
+findOverlapsAcross :: (MonadIO m, C.PrimMonad m) => Int -> SizedHash -> C.ConduitT Fasta (V.Vector B.ByteString) m ()
 findOverlapsAcross n (SizedHash hashSize imap) = CC.conduitVector 4096 .| asyncMapC (2 * n) findOverlapsAcross'
     where
-        findOverlapsAcross' :: V.Vector Fasta -> B.ByteString
-        findOverlapsAcross' = B.concat . concatMap findOverlapsAcross'1
-        findOverlapsAcross'1 :: Fasta -> [B.ByteString]
-        findOverlapsAcross'1 faseq@(Fasta sid _) = concat [[c, "\tC\t", sid, "\n"] | c <- covered]
-            where
-                hashes :: IS.IntSet
-                hashes = IS.fromList . VS.toList $ rollall hashSize (seqdata faseq)
-
-                candidates :: [Fasta]
-                candidates = concat . IM.elems $ IM.restrictKeys imap hashes
-
-                covered :: [B.ByteString]
-                covered = mapMaybe (`matches` faseq) candidates
-                matches (Fasta h s) (Fasta _ seq')
-                    | B.isInfixOf s seq' = Just h
-                    | otherwise = Nothing
+        findOverlapsAcross' :: V.Vector Fasta -> V.Vector B.ByteString
+        findOverlapsAcross' = V.map findOverlapsAcross'1
+        findOverlapsAcross'1 :: Fasta -> B.ByteString
+        findOverlapsAcross'1 faseq = unsafeDupablePerformIO $ do
+                let hashSize' = toEnum hashSize
+                    h = seqheader faseq
+                    s = seqdata faseq
+                r <- [CU.block| char * { write_matches($(const void* imap), $(int hashSize'),
+                        ($bs-ptr:h), $bs-len:h,
+                        ($bs-ptr:s), $bs-len:s);
+                        }|]
+                BU.unsafePackMallocCString r
 
 data CmdFlags = OutputFile FilePath
                 | InputFile FilePath
@@ -202,11 +205,11 @@ main = do
                         .| C.sinkHandle hout
         ModeAcross -> do
             h <- C.runResourceT $
-                withPossiblyCompressedFile (ifile opts) $ \cin ->
-                    C.runConduit $
-                        cin
-                        .| faConduit
-                        .| buildHash nthreads
+                    withPossiblyCompressedFile (ifile opts) $ \cin ->
+                        C.runConduit $
+                            cin
+                            .| faConduit
+                            .| buildHash nthreads
             putStrLn "Built initial hash"
             extraFiles <-
                 C.runConduitRes $
@@ -222,5 +225,5 @@ main = do
                             cinput
                             .| faConduit
                             .| findOverlapsAcross nthreads h
-                            .| C.sinkHandle hout
+                            .| CC.mapM_ (liftIO . V.mapM_ (B.hPut hout))
             putStrLn "Done."

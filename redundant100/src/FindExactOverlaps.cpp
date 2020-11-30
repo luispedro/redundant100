@@ -1,6 +1,13 @@
+#include <algorithm>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <vector>
+#include <cstring>
+#include <iostream>
+#include <sstream>
+#include <unordered_map>
+
 
 
 static const uint64_t hash0 = 0;
@@ -57,6 +64,7 @@ static uint64_t rotateL(uint64_t x, int n) {
     n %= 64;
     return (x << n) | (x >> (64-n));
 }
+extern "C"
 int rollhash(const unsigned char* seq, const int len, const int n, uint64_t* out) {
     uint64_t cur = hash0;
     for (int i = 0 ; i != n - 1; ++i) {
@@ -70,3 +78,54 @@ int rollhash(const unsigned char* seq, const int len, const int n, uint64_t* out
     }
 
 }
+
+struct Fasta {
+   Fasta(std::string h, std::string s)
+      :header(h)
+      ,seq(s)
+   { }
+   std::string header;
+   std::string seq;
+};
+
+typedef std::unordered_multimap<uint64_t, Fasta> hash_type;
+static void find_matches(const hash_type& h, const uint64_t key, const std::string& header, const std::string& seq, std::ostringstream& out) {
+   auto r = h.equal_range(key);
+   auto candidate = r.first;
+   auto end = r.second;
+   for (; candidate != end; ++candidate) {
+      if (seq.find(candidate->second.seq) != std::string::npos) {
+         out << candidate->second.header << "\tC\t" << header << "\n";
+      }
+   }
+}
+
+extern "C" void* init_hash() {
+   return new hash_type;
+}
+
+extern "C" void destroy_hash(void* h) {
+    delete reinterpret_cast<hash_type*>(h);
+}
+
+extern "C" void insert_hash(void * h, uint64_t key, const char* header, const char* s) {
+   reinterpret_cast<hash_type*>(h)->emplace(key, Fasta(header, s));
+}
+
+extern "C" char* write_matches(const void* h, const int n, const char* header_p, const int header_n, const char* seq_p, const int seq_n) {
+   //std::cerr << "write_matches (" << h << ", " << header << ")\n";
+   std::ostringstream out;
+   const std::string header(header_p, header_n);
+   const std::string seq(seq_p, seq_n);
+
+   std::vector<uint64_t> hs;
+   hs.resize(seq_n - n + 1);
+   rollhash(reinterpret_cast<const unsigned char*>(seq_p), seq_n, n, hs.data());
+   std::sort(hs.begin(), hs.end());
+   auto past = std::unique(hs.begin(), hs.end());
+   for (auto k = hs.begin(); k != past; ++k) {
+      find_matches(*reinterpret_cast<const hash_type*>(h), *k, header, seq, out);
+   }
+   return strdup(out.str().c_str());
+}
+
