@@ -117,7 +117,7 @@ findOverlapsSingle nthreads = do
             .| CC.concat
             .| findOverlapsSingle' h
   where
-    findOverlapsSingle' :: MonadIO m => FastaIOHash -> C.Conduit (Fasta, VS.Vector Int) m B.ByteString
+    findOverlapsSingle' :: MonadIO m => FastaIOHash -> C.ConduitT (Fasta, VS.Vector Int) B.ByteString m ()
     findOverlapsSingle' imap = awaitJust $ \(faseq@(Fasta sid _), hashes) -> do
         let lookup1 :: Pair [Fasta] (Maybe Int) -> Int -> IO (Pair [Fasta] (Maybe Int))
             lookup1 (ccovered :!: mcurk) h = do
