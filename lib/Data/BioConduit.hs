@@ -19,8 +19,8 @@ import           Control.DeepSeq
 
 
 data Fasta = Fasta
-                { seqheader :: !B.ByteString
-                , seqdata :: !B.ByteString
+                { seqheader :: {-# UNPACK #-} !B.ByteString
+                , seqdata :: {-# UNPACK #-} !B.ByteString
                 } deriving (Eq, Show)
 
 instance NFData Fasta where
@@ -32,10 +32,10 @@ faseqLength = B.length . seqdata
 greaterThanSign :: Word8
 greaterThanSign = 62
 
-faConduit :: (MonadIO m) => C.Conduit B.ByteString m Fasta
+faConduit :: (MonadIO m) => C.ConduitT B.ByteString Fasta m ()
 faConduit = C.lines .| faConduit'
 
-faConduit' :: (MonadIO m) => C.Conduit B.ByteString m Fasta
+faConduit' :: (MonadIO m) => C.ConduitT B.ByteString Fasta m ()
 faConduit' = C.await >>= \case
                 Nothing -> return ()
                 Just header
@@ -43,7 +43,7 @@ faConduit' = C.await >>= \case
                   | B.head header == greaterThanSign -> getdata 1 (B.drop 1 header) []
                   | otherwise -> liftIO $ throwIO (AssertionFailed "Unexpected data")
   where
-    getdata :: MonadIO m' => Int -> B.ByteString -> [B.ByteString] -> C.Conduit B.ByteString m' Fasta
+    getdata :: MonadIO m' => Int -> B.ByteString -> [B.ByteString] -> C.ConduitT B.ByteString Fasta m' ()
     getdata !n header toks = C.await >>= \case
                                 Nothing -> C.yield $ Fasta header (B.concat $ reverse toks)
                                 Just next
@@ -53,7 +53,7 @@ faConduit' = C.await >>= \case
                                             getdata (n+1) (B.drop 1 next) []
                                     | otherwise -> getdata (n+1) header (next:toks)
 
-faWriteC :: (Monad m) => C.Conduit Fasta m B.ByteString
+faWriteC :: (Monad m) => C.ConduitT Fasta B.ByteString m ()
 faWriteC = C.awaitForever $ \(Fasta h s) -> do
     C.yield ">"
     C.yield h
@@ -61,5 +61,5 @@ faWriteC = C.awaitForever $ \(Fasta h s) -> do
     C.yield s
     C.yield "\n"
 
-faWriteConduit :: (Monad m) => [Fasta] -> C.Source m B.ByteString
+faWriteConduit :: (Monad m) => [Fasta] -> C.ConduitT () B.ByteString m ()
 faWriteConduit fas = C.yieldMany fas .| faWriteC
