@@ -4,7 +4,7 @@ stdenv.mkDerivation {
 
   name = "redundant100env";
 
-  buildInputs = with haskell.packages.ghc802; [
+  buildInputs = with haskell.packages.ghc884; [
     stack
     wget
     ghc

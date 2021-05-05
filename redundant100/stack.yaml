@@ -1,10 +1,9 @@
-resolver: lts-9.4
+resolver: lts-16.18
 compiler-check: newer-minor
 
 
 # Packages to be pulled from upstream that are not in the resolver (e.g., acme-missiles-0.3)
-extra-deps:
-    - conduit-algorithms-0.0.4.0
+extra-deps: []
 
 # Override default flag values for local packages and extra-deps
 flags: {}
@@ -16,7 +15,12 @@ nix:
     # Not enabled by default, but if --nix is passed on the command line, then
     # the other options will be used. You can also use ~/.stack/config.yaml
     # enable: true
-    shell-file: shell.nix
+    #shell-file: shell.nix
+    packages:
+        - zlib
+        - bzip2
+        - lzma
+        - gmp
 
 # Control whether we use the GHC we find on the path
 # system-ghc: true
