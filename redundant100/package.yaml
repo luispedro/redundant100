@@ -12,8 +12,10 @@ ghc-options:
   - -threaded
   - -O2
   - -fno-full-laziness
+  - -fPIC
+  - -funbox-strict-fields
   - -rtsopts
-  - ! '"-with-rtsopts=-A64m -n4m -H"'
+  - ! '"-with-rtsopts=-A128m -n8m -H -c"'
 
 
 dependencies:
@@ -55,21 +57,38 @@ source-dirs:
 executables:
   SortSizes:
     main: SortSizes.hs
+    other-modules:
+     - Data.BioConduit
+     - Data.UnionFind
 
   SplitBlocks:
     main: SplitBlocks.hs
+    other-modules:
+     - Data.BioConduit
+     - Data.UnionFind
 
   FindExactOverlaps:
     main: FindExactOverlaps.hs
     c-sources: src/FindExactOverlaps.cpp
+    other-modules:
+     - Data.BioConduit
+     - Data.UnionFind
 
   RemoveRepeats:
     main: RemoveRepeats.hs
+    other-modules:
+     - Data.BioConduit
+     - Data.UnionFind
 
   Remove:
     main: Remove.hs
+    other-modules:
+     - Data.BioConduit
+     - Data.UnionFind
 
-  CleanupHeaders:
-    main: CleanupHeaders.hs
   MergeSizes:
     main: MergeSizes.hs
+    other-modules:
+     - Data.BioConduit
+     - Data.UnionFind
+
